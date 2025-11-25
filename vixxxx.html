@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>市場風險監控儀表板</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #000000;
+            --card-bg: #111111;
+            --text-color: #e0e0e0;
+            /* 儀表板顏色 (依照客戶要求) */
+            --vix-color-yellow: #f1c40f;   /* 0-20 (穩定) */
+            --vix-color-red: #e74c3c;     /* 20-25 (放大) */
+            --vix-color-green: #2ecc71;   /* 25+ (恐慌) */
+
+            --cnn-color-green: #2ecc71;   /* 0-20 (恐懼) */
+            --cnn-color-red: #e74c3c;     /* 20-30 (中立) */
+            --cnn-color-yellow: #f1c40f;   /* 30+ (貪婪) */
+
+            --number-color: #f1c40f; /* 核心數字顏色 */
+            --gauge-label-color: #a0a0a0; /* 刻度文字顏色 */
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: "Microsoft JhengHei", -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0; padding: 40px; height: 100vh;
+            box-sizing: border-box;
+            display: flex; align-items: center; justify-content: center;
+            overflow: hidden; 
+        }
+
+        /* ----- 主要佈局 (左二右一) ----- */
+        .main-layout { display: flex; gap: 40px; width: 90%; max-width: 1400px; height: 80vh; align-items: center; }
+        .left-panel { flex: 0 0 45%; display: flex; flex-direction: row; gap: 20px; justify-content: space-between; align-items: center; height: 100%;}
+        .right-panel { flex: 1; background: var(--card-bg); border-radius: 16px; padding: 25px; height: 100%; display: flex; flex-direction: column;}
+        
+        /* ----- 儀表板卡片樣式 ----- */
+        .gauge-card {
+            background: var(--card-bg); border-radius: 16px; padding: 10px;
+            display: flex; flex-direction: column; align-items: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5); flex: 1; justify-content: flex-start;
+            min-height: 350px; position: relative;
+        }
+
+        .gauge-title { font-size: 1.2rem; font-weight: bold; margin-bottom: 5px; color: #fff;}
+        
+        /* Canvas 容器 */
+        .gauge-canvas-container {
+            width: 320px; 
+            height: 200px; 
+            position: relative; 
+            display: flex; justify-content: center; align-items: center;
+            margin: 10px 0;
+        }
+        .gauge-canvas {
+            position: absolute; 
+            top: 0; left: 0; right: 0; bottom: 0;
+            margin: auto;
+        }
+
+        .gauge-value { font-size: 4.5rem; font-weight: 800; margin-top: 10px; line-height: 1; color: var(--number-color);}
+        .gauge-status { font-size: 1rem; margin-top: 10px; font-weight: bold; padding: 4px 12px; border-radius: 4px; background: #222;}
+
+        /* ----- 圖表區域樣式 ----- */
+        .chart-header { margin-bottom: 10px; text-align: center; }
+        .chart-note { font-size: 0.8rem; color: #666; margin-top: 5px;}
+        .canvas-container { flex: 1; position: relative; width: 100%; }
+        
+    </style>
+</head>
+<body>
+
+    <div class="main-layout">
+        
+        <div class="left-panel">
+            
+            <div class="gauge-card">
+                <div class="gauge-title">VIX 恐慌指數 (0-50 範圍)</div>
+                <div class="gauge-canvas-container">
+                    <canvas id="vixGaugeCanvas" class="gauge-canvas" width="320" height="200"></canvas>
+                </div>
+                <div class="gauge-value" id="vix-val">--.--</div>
+                <div class="gauge-status" id="vix-status">Loading...</div>
+            </div>
+
+            <div class="gauge-card">
+                <div class="gauge-title">CNN 恐懼與貪婪指數 (50-0 範圍)</div>
+                <div class="gauge-canvas-container">
+                    <canvas id="cnnGaugeCanvas" class="gauge-canvas" width="320" height="200"></canvas>
+                </div>
+                <div class="gauge-value" id="cnn-val">--</div>
+                <div class="gauge-status" id="cnn-status">Loading...</div>
+            </div>
+
+        </div>
+
+        <div class="right-panel">
+            <div class="chart-header">
+                <div class="chart-title">綜合趨勢監控 (20日模擬)</div>
+                <div class="chart-note">⚠️ 圖表為模擬數據 | S&P 500 加粗 | VIX 線條終點動態變色</div>
+            </div>
+            <div class="canvas-container">
+                <canvas id="trendChart"></canvas>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const colors = { 
+            green: '#2ecc71', 
+            yellow: '#f1c40f', 
+            red: '#e74c3c',
+            neutral: '#555555' 
+        };
+
+        // --- 儀表板繪製函數 (Canvas 繪圖) ---
+        // 核心邏輯：maxVal 現在是 50，代表整個半圓的範圍。
+        function drawGauge(canvasId, value, maxVal, ranges, reversed = false) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height; 
+            const radius = canvas.width / 2.5; 
+            const innerRadius = radius * 0.6; 
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height); 
+
+            // 繪製彩色分區
+            ranges.forEach(range => {
+                let startVal = range.start;
+                let endVal = range.end;
+
+                if (reversed) {
+                    // 反轉時，彩色區塊的繪製位置也需要根據 maxVal (50) 來反轉
+                    startVal = maxVal - range.end;
+                    endVal = maxVal - range.start;
+                }
+
+                // 角度轉換 (現在 maxVal=50，代表 180 度)
+                const startAngle = Math.PI + (startVal / maxVal) * Math.PI; 
+                const endAngle = Math.PI + (endVal / maxVal) * Math.PI;     
+                
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, radius, startAngle, endAngle, false);
+                ctx.arc(centerX, centerY, innerRadius, endAngle, startAngle, true); 
+                ctx.closePath();
+                ctx.fillStyle = range.color;
+                ctx.fill();
+            });
+
+            // 繪製刻度線和數字 (現在只畫 0-50)
+            ctx.strokeStyle = '#888';
+            ctx.lineWidth = 1;
+            ctx.font = '14px "Microsoft JhengHei"';
+            ctx.fillStyle = 'var(--gauge-label-color)';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            // i 現在只迭代 0 到 50
+            for (let i = 0; i <= maxVal; i += 5) { 
+                let drawVal = i;
+                if (reversed) {
+                    // 刻度數字反轉：0 變成 50，50 變成 0
+                    drawVal = maxVal - i; 
+                }
+
+                // 角度仍是 i / maxVal * 180度
+                const angle = Math.PI + (i / maxVal) * Math.PI; 
+                const tickX = centerX + radius * Math.cos(angle);
+                const tickY = centerY + radius * Math.sin(angle);
+                
+                // 大刻度現在是每 10 單位 (取代舊的 25 單位)
+                const isMajorTick = (i % 10 === 0); 
+                const tickLength = isMajorTick ? 15 : 8;
+
+                const innerTickX = centerX + (radius - tickLength) * Math.cos(angle); 
+                const innerTickY = centerY + (radius - tickLength) * Math.sin(angle);
+
+                ctx.beginPath();
+                ctx.moveTo(tickX, tickY);
+                ctx.lineTo(innerTickX, innerTickY);
+                ctx.stroke();
+
+                if (isMajorTick) { // 每 10 單位標示數字
+                    const labelX = centerX + (radius + 15) * Math.cos(angle); 
+                    const labelY = centerY + (radius + 15) * Math.sin(angle);
+                    ctx.fillText(drawVal, labelX, labelY); 
+                }
+            }
+            
+            // 繪製指針
+            let pointerVal = value;
+            
+            // 1. 先將指針值限制在 0 到 50 之間
+            pointerVal = Math.min(Math.max(0, pointerVal), maxVal);
+
+            if (reversed) {
+                // 如果是反轉儀表板 (50-0)，則指針角度需使用 50 - value
+                pointerVal = maxVal - pointerVal; 
+            }
+
+            // 指針角度計算使用新的 maxVal=50
+            const needleAngle = Math.PI + (pointerVal / maxVal) * Math.PI;
+            const needleLength = radius * 0.9;
+            const needleWidth = 5;
+
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            ctx.rotate(needleAngle);
+            ctx.beginPath();
+            ctx.moveTo(0, 5); 
+            ctx.lineTo(needleLength, 0); 
+            ctx.lineTo(0, -5);
+            ctx.closePath();
+            ctx.fillStyle = '#ffffff'; 
+            ctx.fill();
+            ctx.restore();
+
+            // 繪製指針中心圓點
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 10, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff'; 
+            ctx.fill();
+        }
+
+        // 整個半圓代表 50 個單位
+        const GAUGE_VISUAL_MAX = 50; 
+
+        // --- VIX 數據處理邏輯 (0-50 刻度) ---
+        const VIX_RANGES = [
+            { start: 0, end: 20, color: colors.yellow },    // 0-20黃(穩定)
+            { start: 20, end: 25, color: colors.red },      // 20-25紅(放大)
+            { start: 25, end: GAUGE_VISUAL_MAX, color: colors.green } // 25-50綠(恐慌)
+        ];
+
+        async function fetchVixData() {
+            const valEl = document.getElementById('vix-val');
+            const statusEl = document.getElementById('vix-status');
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1d')}`;
+
+            try {
+                const response = await fetch(proxyUrl);
+                const data = await response.json();
+                let price = data.chart.result[0].meta.regularMarketPrice;
+
+                valEl.innerText = price.toFixed(2);
+
+                let statusColor, statusText;
+
+                if (price < 20) {
+                    statusColor = colors.yellow;
+                    statusText = "🟡 區間穩定波動";
+                } else if (price < 25) {
+                    statusColor = colors.red;
+                    statusText = "🔴 風險波動放大";
+                } else {
+                    statusColor = colors.green;
+                    statusText = "🟢 波動恐慌發生";
+                }
+
+                valEl.style.color = statusColor;
+                statusEl.innerText = statusText; 
+                statusEl.style.color = statusColor;
+
+                // VIX: 範圍 0-50，不反轉
+                drawGauge('vixGaugeCanvas', price, GAUGE_VISUAL_MAX, VIX_RANGES, false);
+                updateVixChartPoint(statusColor); 
+
+            } catch (e) { 
+                valEl.innerText = "--.--";
+                statusEl.innerText = "數據連線失敗";
+                statusEl.style.color = colors.neutral;
+                drawGauge('vixGaugeCanvas', 0, GAUGE_VISUAL_MAX, VIX_RANGES, false);
+            }
+        }
+        fetchVixData(); setInterval(fetchVixData, 60000);
+
+        // --- CNN 數據處理邏輯 (50-0 刻度) ---
+        // 注意：CNN 邏輯是基於 0-100 範圍的，但我們只需要用到 0-50 進行繪製
+        const CNN_RANGES_LOGIC = [
+            { start: 0, end: 20, color: colors.green },     // 0-20綠 (恐懼)
+            { start: 20, end: 30, color: colors.red },      // 20-30紅 (中立)
+            { start: 30, end: 50, color: colors.yellow }    // 30-50黃 (貪婪)
+        ];
+
+        function fetchCNNData() {
+            const valEl = document.getElementById('cnn-val');
+            const statusEl = document.getElementById('cnn-status');
+            
+            // 模擬數值 (貼近圖中範例: 43)
+            let cnnValue = 43; 
+            
+            valEl.innerText = cnnValue;
+
+            let statusColor, statusText;
+
+            // CNN 邏輯判斷 (基於實際值)
+            if (cnnValue < 20) {
+                statusColor = colors.green;
+                statusText = "🟢 極度恐懼";
+            } else if (cnnValue <= 30) {
+                statusColor = colors.red;
+                statusText = "🔴 中立觀望";
+            } else { // cnnValue > 30 (並自動涵蓋超過 50 的情況，因為指針會被上限 50 限制)
+                statusColor = colors.yellow; 
+                statusText = "🟡 市場貪婪"; 
+            }
+            
+            valEl.style.color = statusColor;
+            statusEl.innerText = statusText + " (模擬)"; 
+            statusEl.style.color = statusColor;
+
+            // CNN: 範圍 50-0，反轉
+            drawGauge('cnnGaugeCanvas', cnnValue, GAUGE_VISUAL_MAX, CNN_RANGES_LOGIC, true); 
+        }
+        fetchCNNData();
+
+        // --- 折線圖 (Chart.js) --- (此部分與儀表板範圍調整無關)
+        const ctx = document.getElementById('trendChart').getContext('2d');
+        
+        const labels = Array.from({ length: 20 }, (_, i) => `T-${19 - i}`);
+        labels[19] = '今日';
+
+        const spxData = [4000, 4050, 4030, 4080, 4100, 4130, 4160, 4140, 4190, 4200, 4220, 4250, 4230, 4280, 4300, 4270, 4320, 4350, 4330, 4380]; 
+        const vixData = [25, 24, 26, 23, 22, 21, 20, 21, 19, 18, 17, 16, 17, 15, 14, 16, 13, 12, 11, 10]; 
+
+        let chartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'S&P 500',
+                        data: spxData,
+                        borderColor: '#3498db', 
+                        backgroundColor: '#3498db',
+                        yAxisID: 'y_spx',
+                        tension: 0, 
+                        borderWidth: 4, 
+                        pointRadius: 4
+                    },
+                    {
+                        label: 'VIX',
+                        data: vixData,
+                        borderColor: '#f1c40f', 
+                        backgroundColor: '#f1c40f',
+                        yAxisID: 'y_vix', 
+                        tension: 0, 
+                        borderWidth: 2,
+                        pointRadius: 6, 
+                        pointBackgroundColor: '#f1c40f',
+                        pointBorderColor: '#ffffff'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false, 
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { labels: { color: '#ccc', font: {size: 12} } }
+                },
+                scales: {
+                    x: { grid: { color: '#333' }, ticks: { color: '#888' } },
+                    y_spx: {
+                        type: 'linear', display: true, position: 'left',
+                        grid: { color: '#333' }, ticks: { color: '#3498db' },
+                        title: { display: true, text: 'S&P 500', color: '#3498db' }
+                    },
+                    y_vix: {
+                        type: 'linear', display: true, position: 'right',
+                        grid: { drawOnChartArea: false }, ticks: { color: '#f1c40f' },
+                        min: 0, max: 100, 
+                        title: { display: true, text: 'VIX', color: '#f1c40f' }
+                    }
+                }
+            }
+        });
+
+        function updateVixChartPoint(newColor) {
+            const dataset = chartInstance.data.datasets[1];
+            const lastIndex = dataset.data.length - 1;
+
+            let pointColors = new Array(lastIndex).fill(dataset.borderColor); 
+            pointColors.push(newColor); 
+            dataset.pointBackgroundColor = pointColors;
+            dataset.pointBorderColor = newColor;
+            
+            chartInstance.legend.legendItems[1].fillStyle = newColor;
+
+            chartInstance.update();
+        }
+    </script>
+</body>
+</html>
