@@ -49,9 +49,8 @@
             width: 100%;
         }
 
-        /* 【修正】VIX 儀表板標題 (移除範圍說明) */
         .gauge-title { 
-            font-size: 1.5rem; 
+            font-size: 3.2rem; 
             font-weight: bold; 
             margin-bottom: 15px; 
             color: #fff;
@@ -80,6 +79,8 @@
             line-height: 1; 
             color: var(--number-color);
         }
+        
+        /* 狀態文字容器 */
         .gauge-status { 
             font-size: 1.2rem; 
             margin-top: 15px; 
@@ -87,6 +88,16 @@
             padding: 6px 15px; 
             border-radius: 8px; 
             background: #222;
+            text-align: center;
+            line-height: 1.4;
+        }
+        
+        /* 【修正樣式】移除 display: block; 讓其在同一行顯示 */
+        .gauge-status .advice {
+            /* display: block;  <-- 移除此行 */
+            font-weight: normal; 
+            opacity: 0.6; /* 降低透明度 */
+            font-size: 1.2rem;
         }
         
     </style>
@@ -129,7 +140,6 @@
 
             // 繪製彩色分區
             ranges.forEach(range => {
-                // 角度轉換 ( maxVal=50，代表 180 度)
                 const startAngle = Math.PI + (range.start / maxVal) * Math.PI; 
                 const endAngle = Math.PI + (range.end / maxVal) * Math.PI;     
                 
@@ -214,7 +224,6 @@
                 const response = await fetch(proxyUrl);
                 const data = await response.json();
                 
-                // 檢查數據是否有效
                 if (!data.chart || !data.chart.result || data.chart.result.length === 0 || !data.chart.result[0].meta) {
                     throw new Error("API response structure invalid.");
                 }
@@ -224,20 +233,26 @@
                 valEl.innerText = price.toFixed(2);
 
                 let statusColor, statusText;
+                let adviceText;
 
                 if (price < 20) {
                     statusColor = colors.yellow;
-                    statusText = "🟡 情緒穩定趨勢持續";
+                    statusText = "🟡 區間穩定波動 ";
+                    adviceText = "情緒穩定趨勢持續";
                 } else if (price < 25) {
                     statusColor = colors.red;
-                    statusText = "🔴 風險放大準備減碼";
+                    statusText = "🔴 風險波動放大 ";
+                    adviceText = "小心應對適時減碼";
                 } else {
                     statusColor = colors.green;
-                    statusText = "🟢 別人恐懼我貪婪";
+                    statusText = "🟢 波動恐慌發生 ";
+                    adviceText = "別人恐懼我貪婪";
                 }
-
+                
+                // 【修正】將 advice 放在同一行，前面多加一個空格
+                statusEl.innerHTML = `${statusText} <span class="advice">(${adviceText})</span>`;
+                
                 valEl.style.color = statusColor;
-                statusEl.innerText = statusText; 
                 statusEl.style.color = statusColor;
 
                 drawGauge('vixGaugeCanvas', price, GAUGE_VISUAL_MAX, VIX_RANGES);
@@ -245,14 +260,13 @@
             } catch (e) { 
                 console.error("VIX 儀表板數據抓取失敗:", e);
                 
-                // 【修正】數據抓取失敗時的處理
-                valEl.innerText = "0.00"; // 顯示 0.00
+                valEl.innerText = "0.00"; 
                 valEl.style.color = colors.neutral;
                 
-                statusEl.innerText = "⚠️ 數據連線失敗/API 無效";
+                // 【修正】數據失敗時也使用單行結構
+                statusEl.innerHTML = `⚠️ 數據連線失敗 <span class="advice">(API 無效或離線)</span>`;
                 statusEl.style.color = colors.neutral;
                 
-                // 儀表板指針指向 0
                 drawGauge('vixGaugeCanvas', 0, GAUGE_VISUAL_MAX, VIX_RANGES);
             }
         }
