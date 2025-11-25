@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VIX 恐慌指數儀表板</title>
+    <style>
+        :root {
+            --bg-color: #000000;
+            --card-bg: #111111;
+            --text-color: #e0e0e0;
+            /* 儀表板顏色 (VIX) */
+            --vix-color-yellow: #f1c40f;   /* 0-20 (穩定) */
+            --vix-color-red: #e74c3c;      /* 20-25 (放大) */
+            --vix-color-green: #2ecc71;    /* 25+ (恐慌) */
+
+            --number-color: #f1c40f; /* 核心數字顏色 */
+            --gauge-label-color: #a0a0a0; /* 刻度文字顏色 */
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: "Microsoft JhengHei", -apple-system, BlinkMacSystemFont, sans-serif;
+            margin: 0; padding: 40px; height: 100vh;
+            box-sizing: border-box;
+            display: flex; align-items: center; justify-content: center;
+        }
+
+        /* ----- 主要佈局 (只剩單一卡片) ----- */
+        .main-layout { 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            width: 90%; 
+            max-width: 500px; 
+            height: auto;
+        }
+        
+        /* ----- 儀表板卡片樣式 ----- */
+        .gauge-card {
+            background: var(--card-bg); 
+            border-radius: 16px; 
+            padding: 20px;
+            display: flex; 
+            flex-direction: column; 
+            align-items: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5); 
+            width: 100%;
+        }
+
+        /* 【修正】VIX 儀表板標題 (移除範圍說明) */
+        .gauge-title { 
+            font-size: 1.5rem; 
+            font-weight: bold; 
+            margin-bottom: 15px; 
+            color: #fff;
+        }
+        
+        /* Canvas 容器 */
+        .gauge-canvas-container {
+            width: 350px; 
+            height: 220px; 
+            position: relative; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center;
+            margin: 10px 0;
+        }
+        .gauge-canvas {
+            position: absolute; 
+            top: 0; left: 0; right: 0; bottom: 0;
+            margin: auto;
+        }
+
+        .gauge-value { 
+            font-size: 5rem; 
+            font-weight: 800; 
+            margin-top: 10px; 
+            line-height: 1; 
+            color: var(--number-color);
+        }
+        .gauge-status { 
+            font-size: 1.2rem; 
+            margin-top: 15px; 
+            font-weight: bold; 
+            padding: 6px 15px; 
+            border-radius: 8px; 
+            background: #222;
+        }
+        
+    </style>
+</head>
+<body>
+
+    <div class="main-layout">
+        
+        <div class="gauge-card">
+            <div class="gauge-title">VIX 恐慌指數</div>
+            <div class="gauge-canvas-container">
+                <canvas id="vixGaugeCanvas" class="gauge-canvas" width="350" height="220"></canvas>
+            </div>
+            <div class="gauge-value" id="vix-val">--.--</div>
+            <div class="gauge-status" id="vix-status">Loading...</div>
+        </div>
+
+    </div>
+
+    <script>
+        const colors = { 
+            yellow: '#f1c40f', 
+            red: '#e74c3c',
+            green: '#2ecc71',
+            neutral: '#555555' 
+        };
+
+        // --- 儀表板繪製函數 (Canvas 繪圖) ---
+        const GAUGE_VISUAL_MAX = 50; 
+
+        function drawGauge(canvasId, value, maxVal, ranges) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            const centerX = canvas.width / 2;
+            const centerY = canvas.height; 
+            const radius = canvas.width / 2.5; 
+            const innerRadius = radius * 0.6; 
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height); 
+
+            // 繪製彩色分區
+            ranges.forEach(range => {
+                // 角度轉換 ( maxVal=50，代表 180 度)
+                const startAngle = Math.PI + (range.start / maxVal) * Math.PI; 
+                const endAngle = Math.PI + (range.end / maxVal) * Math.PI;     
+                
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, radius, startAngle, endAngle, false);
+                ctx.arc(centerX, centerY, innerRadius, endAngle, startAngle, true); 
+                ctx.closePath();
+                ctx.fillStyle = range.color;
+                ctx.fill();
+            });
+
+            // 繪製刻度線和數字
+            ctx.strokeStyle = '#888';
+            ctx.lineWidth = 1;
+            ctx.font = '14px "Microsoft JhengHei"';
+            ctx.fillStyle = 'var(--gauge-label-color)';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            
+            for (let i = 0; i <= maxVal; i += 5) { 
+                const angle = Math.PI + (i / maxVal) * Math.PI; 
+                const isMajorTick = (i % 10 === 0); 
+                const tickLength = isMajorTick ? 15 : 8;
+
+                const tickX = centerX + radius * Math.cos(angle);
+                const tickY = centerY + radius * Math.sin(angle);
+                const innerTickX = centerX + (radius - tickLength) * Math.cos(angle); 
+                const innerTickY = centerY + (radius - tickLength) * Math.sin(angle);
+
+                ctx.beginPath();
+                ctx.moveTo(tickX, tickY);
+                ctx.lineTo(innerTickX, innerTickY);
+                ctx.stroke();
+
+                if (isMajorTick) { 
+                    const labelX = centerX + (radius + 15) * Math.cos(angle); 
+                    const labelY = centerY + (radius + 15) * Math.sin(angle);
+                    ctx.fillText(i, labelX, labelY); 
+                }
+            }
+            
+            // 繪製指針
+            let pointerVal = Math.min(Math.max(0, value), maxVal);
+
+            const needleAngle = Math.PI + (pointerVal / maxVal) * Math.PI;
+            const needleLength = radius * 0.9;
+
+            ctx.save();
+            ctx.translate(centerX, centerY);
+            ctx.rotate(needleAngle);
+            ctx.beginPath();
+            ctx.moveTo(0, 5); 
+            ctx.lineTo(needleLength, 0); 
+            ctx.lineTo(0, -5);
+            ctx.closePath();
+            ctx.fillStyle = '#ffffff'; 
+            ctx.fill();
+            ctx.restore();
+
+            // 繪製指針中心圓點
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 10, 0, Math.PI * 2);
+            ctx.fillStyle = '#ffffff'; 
+            ctx.fill();
+        }
+
+        // --- VIX 數據處理邏輯 (0-50 刻度) ---
+        const VIX_RANGES = [
+            { start: 0, end: 20, color: colors.yellow },    
+            { start: 20, end: 25, color: colors.red },      
+            { start: 25, end: GAUGE_VISUAL_MAX, color: colors.green } 
+        ];
+
+        async function fetchVixData() {
+            const valEl = document.getElementById('vix-val');
+            const statusEl = document.getElementById('vix-status');
+            
+            // 抓取 VIX 實時數據 (interval=1m)
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/%5EVIX?interval=1m')}`;
+
+            try {
+                const response = await fetch(proxyUrl);
+                const data = await response.json();
+                
+                // 檢查數據是否有效
+                if (!data.chart || !data.chart.result || data.chart.result.length === 0 || !data.chart.result[0].meta) {
+                    throw new Error("API response structure invalid.");
+                }
+                
+                let price = data.chart.result[0].meta.regularMarketPrice;
+
+                valEl.innerText = price.toFixed(2);
+
+                let statusColor, statusText;
+
+                if (price < 20) {
+                    statusColor = colors.yellow;
+                    statusText = "🟡 區間穩定波動";
+                } else if (price < 25) {
+                    statusColor = colors.red;
+                    statusText = "🔴 風險波動放大";
+                } else {
+                    statusColor = colors.green;
+                    statusText = "🟢 波動恐慌發生";
+                }
+
+                valEl.style.color = statusColor;
+                statusEl.innerText = statusText; 
+                statusEl.style.color = statusColor;
+
+                drawGauge('vixGaugeCanvas', price, GAUGE_VISUAL_MAX, VIX_RANGES);
+
+            } catch (e) { 
+                console.error("VIX 儀表板數據抓取失敗:", e);
+                
+                // 【修正】數據抓取失敗時的處理
+                valEl.innerText = "0.00"; // 顯示 0.00
+                valEl.style.color = colors.neutral;
+                
+                statusEl.innerText = "⚠️ 數據連線失敗/API 無效";
+                statusEl.style.color = colors.neutral;
+                
+                // 儀表板指針指向 0
+                drawGauge('vixGaugeCanvas', 0, GAUGE_VISUAL_MAX, VIX_RANGES);
+            }
+        }
+        
+        // 首次載入和每 60 秒更新一次 VIX 實時數據
+        fetchVixData(); 
+        setInterval(fetchVixData, 60000); 
+    </script>
+</body>
+</html>
