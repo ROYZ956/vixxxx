@@ -3,19 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VIX 恐慌指數儀表板</title>
+    <title>VIX 與 S&P 500 市場監控</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
             --bg-color: #000000;
             --card-bg: #111111;
             --text-color: #e0e0e0;
-            /* 儀表板顏色 (VIX) */
-            --vix-color-yellow: #f1c40f;   /* 0-20 (穩定) */
-            --vix-color-red: #e74c3c;      /* 20-25 (放大) */
-            --vix-color-green: #2ecc71;    /* 25+ (恐慌) */
-
-            --number-color: #f1c40f; /* 核心數字顏色 */
-            --gauge-label-color: #a0a0a0; /* 刻度文字顏色 */
+            /* 顏色變數 */
+            --vix-color-yellow: #f1c40f;
+            --vix-color-red: #e74c3c;
+            --vix-color-green: #2ecc71;
+            --spx-color: #3498db; /* 標普 500 顏色 */
+            --number-color: #f1c40f;
+            --gauge-label-color: #a0a0a0;
+            --secondary-text-color: #888; /* 新增灰白色調給副標題 */
         }
 
         body {
@@ -27,17 +29,36 @@
             display: flex; align-items: center; justify-content: center;
         }
 
-        /* ----- 主要佈局 (只剩單一卡片) ----- */
+        /* ----- 主要佈局 (兩欄式佈局) ----- */
         .main-layout { 
             display: flex; 
-            justify-content: center; 
-            align-items: center; 
+            gap: 30px; 
             width: 90%; 
-            max-width: 500px; 
-            height: auto;
+            max-width: 1200px; 
+            /* 【修正】移除固定高度，讓 flexbox 自動拉伸 */
+            /* height: 60vh; */ /* 之前是 60vh，這次讓它自動適應內容 */
+            align-items: stretch; /* 【修正】讓 flex 項目自動拉伸至最高的一個的高度 */
         }
         
-        /* ----- 儀表板卡片樣式 ----- */
+        /* 左側 VIX 儀表板 */
+        .left-panel {
+            flex: 0 0 350px; 
+            height: auto; /* 【修正】讓高度自動，由 gauge-card 撐開 */
+        }
+
+        /* 右側 S&P 500 圖表 */
+        .right-panel {
+            flex: 1; 
+            background: var(--card-bg); 
+            border-radius: 16px; 
+            padding: 25px; 
+            height: auto; /* 【修正】讓高度自動，由 canvas-container 和 chart-header 撐開 */
+            display: flex; 
+            flex-direction: column; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5); 
+        }
+
+        /* ----- 儀表板卡片樣式 (VIX) ----- */
         .gauge-card {
             background: var(--card-bg); 
             border-radius: 16px; 
@@ -47,6 +68,7 @@
             align-items: center;
             box-shadow: 0 4px 15px rgba(0,0,0,0.5); 
             width: 100%;
+            height: 100%; /* 【修正】確保 VIX 卡片填滿 left-panel 的高度 */
         }
 
         .gauge-title { 
@@ -56,7 +78,6 @@
             color: #fff;
         }
         
-        /* Canvas 容器 */
         .gauge-canvas-container {
             width: 350px; 
             height: 220px; 
@@ -80,7 +101,6 @@
             color: var(--number-color);
         }
         
-        /* 狀態文字容器 */
         .gauge-status { 
             font-size: 1.2rem; 
             margin-top: 15px; 
@@ -92,12 +112,34 @@
             line-height: 1.4;
         }
         
-        /* 【修正樣式】移除 display: block; 讓其在同一行顯示 */
         .gauge-status .advice {
-            /* display: block;  <-- 移除此行 */
             font-weight: normal; 
-            opacity: 0.6; /* 降低透明度 */
-            font-size: 1.2rem;
+            opacity: 0.6; 
+            font-size: 1.2rem; 
+        }
+
+        /* ----- 圖表樣式 (S&P 500) ----- */
+        .chart-header { 
+            /* 【修正 1】調整回上次修改前的位置 */
+            margin-top: 15px; 
+            margin-bottom: 0; 
+            text-align: center; 
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+        /* 【修正 3】S&P 500 副標題顏色 */
+        .chart-header .sub-title {
+            font-weight: normal; 
+            opacity: 0.6; 
+            font-size: 1.2rem; /* 與 VIX 的 advice 保持一致 */
+            color: var(--secondary-text-color);
+            margin-left: 5px; /* 與主標題稍微錯開 */
+        }
+
+        .canvas-container { 
+            flex: 1; /* 讓圖表佔滿剩餘空間，推動標題到底部 */
+            position: relative; 
+            width: 100%; 
         }
         
     </style>
@@ -106,13 +148,24 @@
 
     <div class="main-layout">
         
-        <div class="gauge-card">
-            <div class="gauge-title">VIX 恐慌指數</div>
-            <div class="gauge-canvas-container">
-                <canvas id="vixGaugeCanvas" class="gauge-canvas" width="350" height="220"></canvas>
+        <div class="left-panel">
+            <div class="gauge-card">
+                <div class="gauge-title">VIX 恐慌指數</div>
+                <div class="gauge-canvas-container">
+                    <canvas id="vixGaugeCanvas" class="gauge-canvas" width="350" height="220"></canvas>
+                </div>
+                <div class="gauge-value" id="vix-val">--.--</div>
+                <div class="gauge-status" id="vix-status">Loading...</div>
             </div>
-            <div class="gauge-value" id="vix-val">--.--</div>
-            <div class="gauge-status" id="vix-status">Loading...</div>
+        </div>
+
+        <div class="right-panel">
+            <div class="canvas-container">
+                <canvas id="spxTrendChart"></canvas>
+            </div>
+            
+            <div class="chart-header">
+                S&P 500 趨勢 <span class="sub-title">(20日收盤價)</span> </div>
         </div>
 
     </div>
@@ -122,6 +175,7 @@
             yellow: '#f1c40f', 
             red: '#e74c3c',
             green: '#2ecc71',
+            blue: '#3498db', 
             neutral: '#555555' 
         };
 
@@ -230,7 +284,7 @@
                 
                 let price = data.chart.result[0].meta.regularMarketPrice;
 
-                valEl.innerText = price.toFixed(2);
+                valEl.innerText = price.toFixed(2); 
 
                 let statusColor, statusText;
                 let adviceText;
@@ -249,7 +303,6 @@
                     adviceText = "別人恐懼我貪婪";
                 }
                 
-                // 【修正】將 advice 放在同一行，前面多加一個空格
                 statusEl.innerHTML = `${statusText} <span class="advice">(${adviceText})</span>`;
                 
                 valEl.style.color = statusColor;
@@ -263,7 +316,6 @@
                 valEl.innerText = "0.00"; 
                 valEl.style.color = colors.neutral;
                 
-                // 【修正】數據失敗時也使用單行結構
                 statusEl.innerHTML = `⚠️ 數據連線失敗 <span class="advice">(API 無效或離線)</span>`;
                 statusEl.style.color = colors.neutral;
                 
@@ -271,9 +323,110 @@
             }
         }
         
+        // --- S&P 500 圖表邏輯 (Chart.js) ---
+        const ctxSpx = document.getElementById('spxTrendChart').getContext('2d');
+        let spxChartInstance;
+        
+        async function fetchChartData() {
+            const now = Math.floor(Date.now() / 1000);
+            const sixtyDaysAgo = now - (60 * 24 * 60 * 60); 
+
+            const cacheBuster = `&_=${Date.now()}`; 
+
+            // 抓取 S&P 500 (^GSPC) 歷史收盤數據 (interval=1d)
+            const spxUrl = `https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?interval=1d&period1=${sixtyDaysAgo}&period2=${now}` + cacheBuster;
+            const proxyUrlSpx = `https://api.allorigins.win/raw?url=${encodeURIComponent(spxUrl)}`;
+
+            try {
+                const spxResponse = await fetch(proxyUrlSpx).then(res => res.json());
+
+                const spxCloses = spxResponse.chart.result[0].indicators.quote[0].close;
+                const spxDates = spxResponse.chart.result[0].timestamp;
+
+                const combinedData = [];
+                for (let i = 0; i < spxDates.length; i++) {
+                    if (spxCloses[i] !== null) {
+                        combinedData.push({
+                            date: new Date(spxDates[i] * 1000),
+                            spx: spxCloses[i],
+                        });
+                    }
+                }
+                
+                const recentData = combinedData.slice(-20); 
+
+                const dates = recentData.map(d => `${d.date.getMonth() + 1}/${d.date.getDate()}`);
+                const spxData = recentData.map(d => d.spx);
+
+                if (spxChartInstance) {
+                    spxChartInstance.data.labels = dates;
+                    spxChartInstance.data.datasets[0].data = spxData;
+                    spxChartInstance.update();
+                } else {
+                    initializeSpxChart(dates, spxData);
+                }
+
+            } catch (e) {
+                console.error("S&P 500 趨勢圖數據抓取失敗:", e);
+                
+                if (!spxChartInstance) {
+                    const mockLabels = ['T-19', '...', '今日'];
+                    const mockData = Array(18).fill(4200).concat([4250, 4300]); 
+                    initializeSpxChart(mockLabels, mockData);
+                }
+            }
+        }
+        
+        function initializeSpxChart(labels, spxData) {
+            spxChartInstance = new Chart(ctxSpx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'S&P 500',
+                            data: spxData,
+                            borderColor: colors.blue, 
+                            backgroundColor: 'rgba(52, 152, 219, 0.2)', 
+                            yAxisID: 'y_spx',
+                            tension: 0.3, 
+                            borderWidth: 3, 
+                            pointRadius: 4,
+                            fill: true, 
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false, 
+                    plugins: {
+                        legend: { labels: { color: '#ccc', boxWidth: 10 } }
+                    },
+                    scales: {
+                        x: { 
+                            grid: { color: '#333' }, 
+                            ticks: { color: '#888', maxRotation: 45, minRotation: 45 } 
+                        },
+                        y_spx: {
+                            type: 'linear', 
+                            display: true, 
+                            position: 'left',
+                            grid: { color: '#333' }, 
+                            ticks: { color: colors.blue, callback: function(value) { return value.toFixed(0); } },
+                            title: { display: true, text: '指數點位', color: colors.blue }
+                        }
+                    }
+                }
+            });
+        }
+        
         // 首次載入和每 60 秒更新一次 VIX 實時數據
         fetchVixData(); 
         setInterval(fetchVixData, 60000); 
+
+        // 首次載入和每 1 小時更新一次 S&P 500 趨勢圖的歷史數據
+        fetchChartData(); 
+        setInterval(fetchChartData, 3600000); 
     </script>
 </body>
 </html>
